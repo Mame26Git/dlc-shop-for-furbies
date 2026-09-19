@@ -1,17 +1,17 @@
 [
     { 
-        "file": "context.dlc", 
-        "title": "Context Logo",
+        "file": "tu002560.dlc", 
+        "title": "Package 1",
         "buttons": [
-            { "title": "Logo", "action": [75,0,4,4] }
+            { "title": "Test", "action": [75,0,4,4] }
         ]
     },
     { 
-        "file": "hacked.dlc", 
-        "title": "HACKED",
+        "file": "tu020710.dlc", 
+        "title": "Package 2",
         "buttons": [
-            { "title": "Hacked 1", "action": [75,0,3,4] },
-            { "title": "Hacked 2", "action": [75,0,4,4] }
+            { "title": "Test 1", "action": [75,0,3,4] },
+            { "title": "Test 2", "action": [75,0,4,4] }
         ]
     },
     {
