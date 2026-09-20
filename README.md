@@ -1,5 +1,5 @@
-# FurBLE - Furby Web Bluetooth Demo
-Use Web Bluetooth to control your Furby Connect! Tested with Chrome for Android.
+# DLCS For Your Furby - DLC Shop For Furbies
+Use Web Bluetooth to control your Furby Connect! Works Best And Tested for Chrome for Android.
 
 ## [Try it out](https://mame26git.github.io/dlc-shop-for-furbies/furble.html)  or read [our blog](https://www.contextis.com/blog/dont-feed-them-after-midnight-reverse-engineering-the-furby-connect)
 
@@ -9,7 +9,7 @@ Use Web Bluetooth to control your Furby Connect! Tested with Chrome for Android.
 - Connect to / disconnect from Furby
 - Send basic commands (e.g. actions, set antenna colour)
 - Send custom action numbers (see [list of action sequences](https://github.com/Jeija/bluefluff/blob/master/doc/actions.md))
-- Upload and activate DLC files
+- Upload and activate DLC files from the Amazon AWS Servers.
 - Decode and display Furby state (antenna joystick, body sensors, orientation)
 
 ### TODO:
@@ -23,7 +23,8 @@ Pull requests are welcome!
 ## FAQ
 
 #### Why did you make this?
-I wanted to build on the excellent [bluefluff](https://github.com/Jeija/bluefluff) project and make something really easy to use - just visit the [demo page](https://pdjstone.github.io/furby-web-bluetooth/furble.html) with your Android phone and connect to your Furby.
+Thanks To pdjstone for the copy-pasted slop I made. [FurBLE](https://github.com/pdjstone/furby-web-bluetooth)
+I wanted to build on the excellent [bluefluff](https://github.com/Jeija/bluefluff) project and make something really easy to use - just visit the [demo page](https://mame26git.github.io/dlc-shop-for-furbies/furble.html) with your Android phone and connect to your Furby.
 
 #### Does it work with Chrome for Linux/Windows/Mac or other browsers?
 Web Bluetooth is a Chrome-only thing at the moment. Mac is apparently supported, but I've not tested it. It should also work on most Chromebooks. See the Web Bluetooth [implementation status](https://github.com/WebBluetoothCG/web-bluetooth/blob/master/implementation-status.md) page.
@@ -32,7 +33,7 @@ Web Bluetooth is a Chrome-only thing at the moment. Mac is apparently supported,
 Take a look at the built-in [action list](https://github.com/Jeija/bluefluff/blob/master/doc/actions.md#list). Look up the four numbers for a particular action and put them in the 'action sequences' section of FurBLE.
 
 #### I've successfully uploaded a DLC file, but the sounds/graphics seem corrupted
-Try doing the "pull tail/push tongue" reset described below before uploading a new DLC file.
+If this Persisting Your Furby, Try doing the "pull tail/push tongue" reset described below before uploading a new DLC file.
 
 #### Furby keeps disconnecting / going to sleep
 The batteries may be low, try replacing them. Furby eats through batteries fairly rapidly. If you're spending extended period with FurBLE connected to a Furby, turn off the eyes (using the button in the Debug section) to save battery.
@@ -66,8 +67,11 @@ I used the following setup to develop/debug this:
 ## Thanks
 Thanks to [Jeija](https://github.com/Jeija) for his work documenting the Furby Bluetooth protocol, and to [@L0C4RD](https://twitter.com/L0C4RD) for his help dissecting the DLC format. Also thanks to my work colleagues and to my wife whose patience has been pushed to the limit by noisy, farting Furbies that won't shut the *#$& up while I've been trying to debug my code.
 
+This Repository was Copy-Pasted from [pdjstone](https://github.com/pdjstone)
+
 ## Further Reading
 - Reverse Engineering the Furby Connect: https://www.contextis.com/blog/dont-feed-them-after-midnight-reverse-engineering-the-furby-connect
+- Furby Web Bluttooth: https://github.com/pdjstone/furby-web-bluetooth
 - Furby DLC Python library: https://github.com/ctxis/Furby
 - Bluefluff project: https://github.com/Jeija/bluefluff
 - Furbhax project: https://github.com/swarley7/furbhax
