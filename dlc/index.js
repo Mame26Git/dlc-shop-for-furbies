@@ -22,10 +22,10 @@
         ]
     },
     {
-        "file": "chilli.dlc", 
-        "title": "Chilli",
+        "file": "tu011840.dlc", 
+        "title": "Package 4",
         "buttons": [
-            { "title": "Chilli ", "action": [75,0,4,4] }
+            { "title": "test", "action": [75,0,4,4] }
         ]
     }
 ]
