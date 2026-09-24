@@ -41,5 +41,12 @@
         "buttons": [
             { "title": "test", "action": [75,0,4,4] }
         ]
+    },
+    {
+        "file": "tu011100.dlc", 
+        "title": "Package 7",
+        "buttons": [
+            { "title": "test", "action": [75,0,4,4] }
+        ]
     }
 ]
