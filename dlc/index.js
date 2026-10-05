@@ -69,5 +69,12 @@
         "buttons": [
             { "title": "test", "action": [75,0,4,4] }
         ]
+    },
+    { 
+        "file": "tu003410.dlc", 
+        "title": "Package 11 Test",
+        "buttons": [
+            { "title": "Test", "action": [75,0,4,4] }
+        ]
     }
 ]
