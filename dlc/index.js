@@ -72,7 +72,14 @@
     },
     { 
         "file": "tu003410.dlc", 
-        "title": "Package 11 Test",
+        "title": "Package 11",
+        "buttons": [
+            { "title": "Test", "action": [75,0,4,4] }
+        ]
+    },
+    { 
+        "file": "tu002350.dlc", 
+        "title": "Package 12",
         "buttons": [
             { "title": "Test", "action": [75,0,4,4] }
         ]
