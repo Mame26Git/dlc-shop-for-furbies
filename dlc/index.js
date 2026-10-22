@@ -78,7 +78,7 @@
         ]
     },
     { 
-        "file": "tu003410-rickroll.dlc", 
+        "file": "roll.dlc", 
         "title": "Package 11 rickroll",
         "buttons": [
             { "title": "Test for Cheap Thrills", "action": [75,0,3,7] }
