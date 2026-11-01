@@ -78,8 +78,8 @@
         ]
     },
     { 
-        "file": "roll.dlc", 
-        "title": "Package 11 rickroll",
+        "file": "russiEN.dlc", 
+        "title": "Package RUSSIAN",
         "buttons": [
             { "title": "Test for Cheap Thrills", "action": [75,0,3,7] }
         ]
