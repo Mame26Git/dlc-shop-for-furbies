@@ -7,11 +7,18 @@
         ]
     },
     { 
+        "file": "tu003000.dlc", 
+        "title": "Lost Media Package",
+        "buttons": [
+            { "title": "Test", "action": [75,0,4,4] }
+        ]
+    },
+    { 
         "file": "tu020710.dlc", 
         "title": "Package 2 is broken",
         "buttons": [
-            { "title": "Test 1", "action": [75,0,3,4] },
-            { "title": "Test 2", "action": [75,0,4,4] }
+            { "title": "Is that Moana? Shes Cool.", "action": [75,0,0,2] },
+            { "title": "AAAGH", "action": [75,0,0,4] }
         ]
     },
     {
