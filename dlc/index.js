@@ -13,12 +13,19 @@
             { "title": "Test", "action": [75,0,4,4] }
         ]
     },
-    { 
-        "file": "tu020710.dlc", 
-        "title": "Package 2 is broken",
+    {
+        "file": "tu020510.dlc", 
+        "title": "Package 3",
         "buttons": [
-            { "title": "Is that Moana? Shes Cool.", "action": [75,0,0,2] },
-            { "title": "AAAGH", "action": [75,0,0,4] }
+            { "title": " test ", "action": [75,0,4,4] }
+        ]
+    },
+    { 
+        "file": "tu021990.dlc", 
+        "title": "PackageFURBYRECONNECT",
+        "buttons": [
+            { "title": "New video alert?", "action": [75,0,0,0] },
+            { "title": "Lazy", "action": [75,0,0,4] }
         ]
     },
     {
