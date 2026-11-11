@@ -20,6 +20,13 @@
             { "title": " test ", "action": [75,0,4,4] }
         ]
     },
+    {
+        "file": "m9y3ei.DLC", 
+        "title": "PackagePersonality",
+        "buttons": [
+            { "title": " test ", "action": [75,0,4,4] }
+        ]
+    },
     { 
         "file": "tu021990.dlc", 
         "title": "PackageFURBYRECONNECT",
