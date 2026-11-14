@@ -99,8 +99,8 @@
         ]
     },
     { 
-        "file": "russiEN.dlc", 
-        "title": "Package RUSSIAN",
+        "file": "percycru.dlc", 
+        "title": "unknown package",
         "buttons": [
             { "title": "Test for Cheap Thrills", "action": [75,0,3,7] }
         ]
