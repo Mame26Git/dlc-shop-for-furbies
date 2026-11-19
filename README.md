@@ -1,7 +1,7 @@
 # DLCS For Your Furby - DLC Shop For Furbies
 Use Web Bluetooth to control your Furby Connect! Works Best And Tested for Chrome for Android.
 
-## [Try it out](https://mame26git.github.io/dlc-shop-for-furbies/furble.html)  or read [our blog](https://www.contextis.com/blog/dont-feed-them-after-midnight-reverse-engineering-the-furby-connect)
+## [Project temporarily down due to log] or read [our blog](https://www.contextis.com/blog/dont-feed-them-after-midnight-reverse-engineering-the-furby-connect)
 
 <img src="images/furby1.jpg" width="500">
 
