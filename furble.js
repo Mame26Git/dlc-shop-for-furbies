@@ -40,6 +40,81 @@ var device;
 var isConnected = false;
 var isTransferring = false;
 var furby_chars = {};
+var furbies = [];
+var sendTarget = 'all';
+var furbyCount = 0;
+var userDisconnect = false;
+function targets() {
+    var ready = furbies.filter(f => f.ready);
+    if (sendTarget === 'all') return ready;
+    return ready.filter(f => f.id == sendTarget);
+}
+// Each Furby gets its own queue so two writes never hit the same Furby at
+// once (Chrome rejects that with "GATT operation already in progress").
+// A busy write is retried a few times before giving up.
+function writeTo(f, data) {
+    var bytes = new Uint8Array(data);
+    var run = async () => {
+        for (var i = 0; ; i++) {
+            try {
+                await f.chars.GeneralPlusWrite.writeValue(bytes);
+                f.lastSent = performance.now();
+                return;
+            } catch (e) {
+                if (i >= 3 || !f.ready) throw e;
+                await sleep(80 * (i + 1));
+            }
+        }
+    };
+    var p = (f.queue || Promise.resolve()).then(run, run);
+    f.queue = p.catch(() => {});
+    return p;
+}
+function writeGP(data) {
+    var t = targets();
+    if (t.length == 0) return Promise.reject(new Error('No Furby selected'));
+    return Promise.all(t.map(f => writeTo(f, data)));
+}
+function updateTargets() {
+    var sel = document.getElementById('sendto');
+    if (!sel) return;
+    var html = "<option value='all'>All Furbys (" + furbies.length + ")</option>";
+    furbies.forEach(f => { html += "<option value='" + f.id + "'>" + f.name + (f.ready ? '' : ' (reconnecting)') + "</option>"; });
+    sel.innerHTML = html;
+    if (sendTarget !== 'all' && !furbies.some(f => f.id == sendTarget)) sendTarget = 'all';
+    sel.value = sendTarget;
+    var st = document.getElementById('state');
+    if (furbies.length > 1) st.textContent = furbies.length + ' Furbys connected';
+}
+async function onOneDisconnected(f) {
+    if (!f.ready) return;
+    f.ready = false;
+    if (!userDisconnect) {
+        log('> ' + f.name + ' dropped, reconnecting...');
+        msg.error(f.name + ' dropped, reconnecting...');
+        updateTargets();
+        for (var i = 0; i < 6 && !userDisconnect; i++) {
+            await sleep(500 + i * 700);
+            try {
+                await setupFurby(f);
+                f.ready = true;
+                log('> ' + f.name + ' reconnected');
+                msg.ok(f.name + ' reconnected!');
+                updateTargets();
+                return;
+            } catch (e) {
+                log(f.name + ' reconnect try ' + (i + 1) + ' failed: ' + e.message);
+            }
+        }
+    }
+    furbies = furbies.filter(x => x !== f);
+    log('> ' + f.name + ' disconnected');
+    if (furbies.length == 0) { onDisconnected(); updateTargets(); return; }
+    furby_chars = furbies[0].chars;
+    device = furbies[0].dev;
+    msg.error(f.name + ' disconnected');
+    updateTargets();
+}
 var gp_listen_callbacks = [];
 var nordicListener = null;
 var keepAliveTimer = null;
@@ -62,29 +137,60 @@ function log() {
     o.scrollTop = o.scrollHeight;
 }
 
-function sendGPCmd(data, response_prefix) {
+// Sends a command to the Furby. If a reply is expected and none arrives
+// within GP_TIMEOUT_MS, the command is sent again (the Furby sometimes
+// ignores commands, e.g. right after a DLC upload while it saves the file).
+const GP_TIMEOUT_MS = 2000;
+const GP_MAX_TRIES = 5;
+function sendGPCmd(data, response_prefix, timeoutMs = GP_TIMEOUT_MS, maxTries = GP_MAX_TRIES) {
     return new Promise((resolve, reject) => {
         if (data.length != 2 && data[0] != 0x20 && data[1] != 0x06)
             log('Sending data to GeneralPlusWrite', buf2hex(data));
         var hnd;
+        var timer = null;
+        var tries = 0;
+        var done = false;
+        let finish = (fn, val) => {
+            if (done) return;
+            done = true;
+            if (timer) clearTimeout(timer);
+            if (hnd !== undefined) removeGPListenCallback(hnd);
+            fn(val);
+        };
         if (response_prefix != NO_RESPONSE) {
-            hnd = addGPListenCallback(response_prefix, buf => {
-                removeGPListenCallback(hnd);
-                resolve(buf);
-            });
+            hnd = addGPListenCallback(response_prefix, buf => finish(resolve, buf));
         }
-        lastCommandSent = performance.now();
-        furby_chars.GeneralPlusWrite.writeValue(new Uint8Array(data))
-            .then(() => {
-                
-                // if we're not expecting a response resolve once the data's been sent
-                if (response_prefix == NO_RESPONSE) 
-                    resolve();
-            }).catch(error => {
-                if (response_prefix != NO_RESPONSE)
-                    removeGPListenCallback(hnd);
-                reject(error);
-            });
+        let send = () => {
+            if (done) return;
+            tries++;
+            lastCommandSent = performance.now();
+            writeGP(data)
+                .then(() => {
+                    // if we're not expecting a response resolve once the data's been sent
+                    if (response_prefix == NO_RESPONSE) {
+                        finish(resolve);
+                        return;
+                    }
+                    if (done) return;
+                    timer = setTimeout(() => {
+                        if (done) return;
+                        if (tries >= maxTries) {
+                            finish(reject, new Error('No reply from Furby to command ' + buf2hex(data)));
+                        } else {
+                            log('No reply yet, resending', buf2hex(data));
+                            send();
+                        }
+                    }, timeoutMs);
+                }).catch(error => {
+                    // Bluetooth busy: wait a moment and try again
+                    if (!done && tries < maxTries) {
+                        setTimeout(send, 200);
+                    } else {
+                        finish(reject, error);
+                    }
+                });
+        };
+        send();
     });
 }
 
@@ -146,12 +252,15 @@ function customAction() {
 function enableEyes(b) {
     return sendGPCmd([0xcd, b ? 1 : 0], NO_RESPONSE);
 }
+// Loading a big DLC can take the Furby a long time, and resending the
+// command while it is still loading only starts it over. So wait up to
+// 45 s for one reply instead of resending every 2 s.
 function loadDLC(slot) {
-    return sendGPCmd([0x60, slot], [0xdc]);
+    return sendGPCmd([0x60, slot], [0xdc], 45000, 1);
 }
 
 function activateDLC() {
-    return sendGPCmd([0x61], [0xdc]);
+    return sendGPCmd([0x61], [0xdc], 20000, 2);
 }
 
 function deactivateDLC(slot) {
@@ -223,9 +332,18 @@ function deleteDLC(slot) {
 }
 
 async function deleteAllDLCSlots() {
+    // Only touch slots that actually hold a DLC, and never let a slow
+    // reply from the Furby stop the upload from going ahead.
+    let slots = null;
+    try {
+        slots = await getDLCInfo();
+    } catch (e) {
+        log('Could not read DLC slots, clearing all of them: ' + (e && e.message ? e.message : e));
+    }
     for (let i=0; i<14; i++) {
-        await deactivateDLC(i);
-        await deleteDLC(i);
+        if (slots && slots[i] == SLOT_EMPTY) continue;
+        try { await deactivateDLC(i); } catch (e) { log(`slot ${i}: deactivate got no reply, carrying on`); }
+        try { await deleteDLC(i); } catch (e) { log(`slot ${i}: delete got no reply, carrying on`); }
     }
 }
 
@@ -234,6 +352,16 @@ async function getFirmwareVersion() {
     let version = buf.getUint8(1)
     log('Firmware version ', version);
     return version;
+}
+
+// Personality switch for Furbys running the patched firmware (furby-personality patch).
+// Command 0x15 takes the two mask readings a real mask would give; 00 00 clears it.
+const PERSONALITY_READINGS = [[0x00,0x00],[0xe3,0x91],[0xc7,0x94],[0xb1,0x97],[0x9b,0x9b],[0x80,0x9f],[0x62,0xa0]];
+const PERSONALITY_NAMES = ['Normal','DJ','Princess','Ninja','Pirate','Cat','PopStar'];
+function setPersonality(i) {
+    let r = PERSONALITY_READINGS[i];
+    log('Setting personality to ' + PERSONALITY_NAMES[i]);
+    return sendGPCmd([0x15, r[0], r[1]], NO_RESPONSE);
 }
 
 function setAntennaColor(r, g, b) {
@@ -246,13 +374,15 @@ function cycleDebug() {
 }
 
 function startKeepAlive() {
-    keepAliveTimer = setInterval(async () => {
-        if (isTransferring) return;
-        if (performance.now() - lastCommandSent > 3000) {
-            let buf = await sendGPCmd([0x20, 0x06], [0x22]);
-            //log('Got ImHereSignal', buf);
-        }
-       
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => {
+        var now = performance.now();
+        furbies.forEach(f => {
+            // only the Furby receiving a file skips its keep-alive
+            if (isTransferring && f.chars === furby_chars) return;
+            if (f.ready && now - (f.lastSent || 0) > 2500)
+                writeTo(f, [0x20, 0x06]).catch(() => {});
+        });
     }, 1000);
 }
 
@@ -272,25 +402,31 @@ function makeDLCFilename(dlcurl) {
     return dlcurl.substr(dlcurl.lastIndexOf('/') + 1).padStart(12, '_').toUpperCase();
 }
 
-async function fetchAndUploadDLC(dlcurl) {
-    let response = await fetch(dlcurl);
+async function fetchDLC(dlcurl) {
+    let response = await fetch(dlcurl, {cache: 'no-store'});
     if (response.status != 200) {
-        throw new Error('Failed to fetch DLC', dlcurl);
         msg.error('DLC not found on server');
+        throw new Error('Failed to fetch DLC ' + dlcurl);
     }
-
     let buf = await response.arrayBuffer();
+    log('Fetched DLC from server:', dlcurl, ' checksum 0x' + adler32(buf).toString(16));
+    return buf;
+}
+
+// Uploads a DLC to the current Furby without switching it on.
+// Throws if the upload fails or the saved file doesn't match.
+async function uploadDLCOnly(buf, dlcurl, label) {
+    label = label || '';
     let chksumOriginal = adler32(buf);
-    log('Fetched DLC from server:', dlcurl, ' checksum 0x' + chksumOriginal.toString(16));
     var progress = document.getElementById('dlcprogress');
     progress.max = buf.byteLength;
-
     try {
         progress.style.display = 'block';
         progress.removeAttribute('value');
         let c = 0;
-        //log('Clearing all DLC slots...');
-        //await deleteAllDLCSlots();
+        log('Clearing all DLC slots...');
+        msg.ok(label + 'Clearing old DLCs off the Furby...');
+        await deleteAllDLCSlots();
         await enableEyes(false); // eyes off, save battery
         await setAntennaColor(0,0,0);
         let name = makeDLCFilename(dlcurl);
@@ -302,52 +438,53 @@ async function fetchAndUploadDLC(dlcurl) {
                 console.log(`transfer: ${current}/${total} maxRx:${maxRx}`);
             if (!started) {
                 started = true;
-                msg.ok('Eyes off while Uploading...');
+                msg.ok(label + 'Eyes off while Uploading...');
             }
             c++; 
         });
-        msg.ok('DLC uploaded!');
-    } catch (e) {
-        msg.error('DLC upload failed :(');
-        log(e.message);
-        console.error(e);
-        await setAntennaColor(255,0,0);
-        return;
     } finally {
         progress.style.display = 'none';
-        await enableEyes(true); // eyes on
+        try { await enableEyes(true); } catch (e) {} // eyes on
     }
+    await sleep(1500); // let the Furby finish saving the file
+    let slots = await getDLCInfo();
+    let filledSlot = slots.indexOf(SLOT_FILLED);
+    if (filledSlot == -1)
+        throw new Error('Upload failed - no slots filled');
+    log('DLC was uploaded to slot ' + filledSlot);
+    let slotInfo = await getDLCSlotInfo(filledSlot);
+    if (slotInfo.checksum != chksumOriginal)
+        throw new Error('Expected checksum of 0x' + chksumOriginal.toString(16) + ' but got 0x' + slotInfo.checksum.toString(16));
+    return filledSlot;
+}
 
-    try { 
-        let slots = await getDLCInfo();
-        let filledSlot = slots.indexOf(SLOT_FILLED);
-        let activeSlot = slots.indexOf(SLOT_ACTIVE);
-        if (filledSlot == -1)
-            throw new Error('Upload failed - no slots filled');
-        else {
-            log('DLC was uploaded to slot ' + filledSlot);
-        }
-        if (activeSlot != -1) {
-            log('deactivating old DLC in slot ' + activeSlot);
-            await deactivateDLC(activeSlot)
-        }
-        
-        let slotInfo = await getDLCSlotInfo(filledSlot);
-        if (slotInfo.checksum != chksumOriginal) {
-            throw new Error('Expected checksum of 0x' + chksumOriginal.toString(16) + ' but got 0x' + slotInfo.checksum.toString(16));
-        }
-        await loadAndActivateDLC(filledSlot);
-        slots = await getDLCInfo();
-        if (slots.indexOf(SLOT_ACTIVE) != filledSlot)
-            throw new Error('Failed to activate');
+// Switches on a DLC that uploadDLCOnly put in the given slot.
+async function activateUploadedDLC(filledSlot) {
+    let slots = await getDLCInfo();
+    let activeSlot = slots.indexOf(SLOT_ACTIVE);
+    if (activeSlot != -1 && activeSlot != filledSlot) {
+        log('deactivating old DLC in slot ' + activeSlot);
+        await deactivateDLC(activeSlot);
+    }
+    await loadAndActivateDLC(filledSlot);
+    slots = await getDLCInfo();
+    if (slots.indexOf(SLOT_ACTIVE) != filledSlot)
+        throw new Error('Failed to activate');
+}
+
+async function fetchAndUploadDLC(dlcurl) {
+    try {
+        let buf = await fetchDLC(dlcurl);
+        let slot = await uploadDLCOnly(buf, dlcurl);
+        msg.ok('DLC uploaded! Activating...');
+        await activateUploadedDLC(slot);
         msg.ok('DLC activated!');
         await setAntennaColor(0,255,0);
     } catch (e) {
-        msg.error('DLC activation failed :(');
-        log(e.message);
-        console.log(e);
-        await setAntennaColor(255,0,0);
-    } 
+        msg.error('DLC upload failed :( ' + (e && e.message ? e.message : e));
+        log(e && e.message ? e.message : e);
+        await setAntennaColor(255,0,0).catch(() => {});
+    }
 }
 
 function adler32(buf) {
@@ -400,278 +537,32 @@ function uploadDLC(dlcbuf, filename, progresscb) {
             }
             let chunk = dlcbuf.slice(sendPos, sendPos + CHUNK_SIZE);
             if (chunk.byteLength > 0) {
-                furby_chars.FileWrite.writeValue(chunk).then(() => {
+                let fw = furby_chars.FileWrite;
+                let write = (fw.properties.writeWithoutResponse && fw.writeValueWithoutResponse)
+                    ? fw.writeValueWithoutResponse(chunk) : fw.writeValue(chunk);
+                write.then(() => {
                     lastCommandSent = performance.now();
                     sendPos += chunk.byteLength;
                     if (progresscb)
                         progresscb(sendPos, size, maxRx);
                     if (sendPos < size)
-                        setTimeout(transferNextChunk, 1);
-                    else 
+                        transferNextChunk(); // no 1 ms timer: browsers stretch it to 4 ms+, which slowed uploads a lot
+                    else {
                         log('Sent final packet');
+                        // If the Furby never confirms, carry on after a while anyway;
+                        // the checksum check afterwards will catch a bad upload.
+                        setTimeout(() => {
+                            if (!isTransferring) return;
+                            log('No upload confirmation from Furby, carrying on');
+                            isTransferring = false;
+                            removeGPListenCallback(hnd);
+                            setNordicNotifications(false);
+                            resolve();
+                        }, 10000);
+                    }
                 }).catch(error => {
                     //removeGPListenCallback(hnd)
                     console.log(error);
-                    if (++failedWrites > 3) {
+                    if (++failedWrites <= 3) {
                         log('FileWrite.writeValue failed, will retry');
-                        setTimeout(transferNextChunk, 16);
-                    } else {
-                        log('FileWrite.writeValue failed, giving up after too many failures');
-                        isTransferring = false;
-                        removeGPListenCallback(hnd);
-                        reject(error);
-                    }
-                    
-                    //reject(error);
-                });  
-            } else {
-                log('tried to send empty packet??');
-                isTransferring = false;
-            }
-        }
-
-        let hnd = addGPListenCallback([0x24], buf => {
-            let fileMode = buf.getUint8(1);
-            log('Got FileWrite callback: ' + file_transfer_modes[fileMode]);
-            if (fileMode == file_transfer_lookup.FileTransferTimeout ||
-                fileMode == file_transfer_lookup.FileReceivedErr) {
-                isTransferring = false;
-                removeGPListenCallback(hnd);
-                setNordicNotifications(false);
-                reject('File Transfer error');
-            } else if (fileMode == file_transfer_lookup.FileReceivedOk) {
-                // TODO: sometimes we get a FileReceivedErr after getting FileReceivedOk
-                // so we should add a delay before resolving to allow for failure
-                log(`sendPos: ${sendPos} / ${size}`);
-                isTransferring = false;
-                removeGPListenCallback(hnd);
-                setNordicNotifications(false);
-                resolve();
-            } else if (fileMode == file_transfer_lookup.ReadyToReceive) {
-                isTransferring = true;
-                transferNextChunk();
-            }
-        });
-
-        let nordicCallback = (buf) => {
-            let code = buf.getUint8(0);
-            if (code == 0x09) {
-                rxPackets = buf.getUint8(1);
-                if (rxPackets > maxRx) maxRx = rxPackets;
-                //console.log(`NordicListen GotPacketAck ${rxPackets}`);
-                //transferNextChunk();
-            } else if (code == 0x0a) {
-                log('NordicListen GotPacketOverload', buf);
-            } else {
-                log('NordicListen uknown', buf);
-            }
-        };
-
-        setNordicNotifications(true, nordicCallback).then(() => {
-            log('Sending init DLC: ', buf2hex(initcmd), 'file length 0x' + size.toString(16));
-            furby_chars.GeneralPlusWrite.writeValue(new Uint8Array(initcmd)).catch(error => reject(error));
-        }).catch(error => reject(error));
-    });
-}
-
-function onDisconnected() {
-    log('> Bluetooth Device disconnected');
-    msg.error('Device Disconnected');
-    clearInterval(keepAliveTimer);
-    isConnected = false;
-    document.getElementById('connbtn').textContent = 'Connect';
-    document.getElementById('state').textContent = 'Not Connected';
-    enableButtons(false);
-    
-}
-
-function enableButtons(enabled) {
-    document.querySelectorAll('#furby-buttons button, #furby-buttons select').forEach(
-        el => {
-            if (enabled)
-                el.removeAttribute('disabled')
-            else
-                el.setAttribute('disabled', 'disabled')
-        });
-}
-
-function onConnected() {
-    startKeepAlive();
-    isConnected = true;
-    msg.ok('Connected!');
-    document.getElementById('connbtn').textContent = 'Disconnect';
-    document.getElementById('state').textContent = 'Connected';
-    enableButtons(true);
-}
-
-function buf2hex(dv) {
-    var s = '';
-    if (DataView.prototype.isPrototypeOf(dv)) {
-        for (var i=0; i < dv.byteLength; i++) {
-            s += ('0' + dv.getUint8(i).toString(16)).substr(-2);
-        }
-    } else if (Array.prototype.isPrototypeOf(dv)) {
-        for (var i=0; i < dv.length; i++) {
-            s += ('0' + dv[i].toString(16)).substr(-2);
-        }    
-    }
-    return s;
-}
-
-function doConnectDisconnect() {
-    isConnected ? doDisconnect() : doConnect();
-}
-
-async function doDisconnect() {
-    try {
-      log('Disconnecting from GATT Server...');
-      device.gatt.disconnect();
-    } catch (e) {
-      log('Argh! ' + e);
-    }
-}
-
-function sleep(t) {
-    return new Promise(resolve  => setTimeout(resolve, t));
-}
-
-async function checkActiveSlot() {
-    let activeSlot = await getActiveSlotInfo();
-    if (activeSlot) {
-        let filename = activeSlot.name.replace(/^_+/, '') + '.dlc'.toUpperCase();
-        log('current active slot is ' + activeSlot.name + ' looking for ' + filename);
-        for (k in dlcdata) {
-            if (k.toUpperCase() == filename) {
-                log('setting up buttons for ' + k);
-                setupDLCButtons(dlcdata[k]);
-            }
-        }
-    }
-}
-
-function onFurbySensorData(buf) {
-    let state = decodeFurbyState(buf);
-    console.log(state);
-    let ul = document.getElementById('sensor-state');
-    //ul.outerHTML = '<ul></ul>';
-    while (ul.firstChild) {
-        ul.removeChild(ul.firstChild);
-    }
-
-    for (k in state) {
-        let v = state[k];
-        let li = document.createElement('li');
-        li.textContent = `${k}: ${v}`;
-        ul.appendChild(li);
-    }
-}
-
-function decodeFurbyState(buf) {
-    let antenna = '';
-    if (buf.getUint8(1) & 2)
-        antenna = 'left';
-    if (buf.getUint8(1) & 1)
-        antenna = 'right';
-    if (buf.getUint8(2) == 0xc0) // fwd | back
-        antenna = 'down';
-    else if (buf.getUint8(2) & 0x40)
-        antenna = 'forward';
-    else if (buf.getUint8(2) & 0x80)
-        antenna = 'back';
-
-    let orientation = '';
-    if (buf.getUint8(4) & 1) 
-        orientation = 'upright';
-    else if (buf.getUint8(4) & 2) 
-        orientation = 'upside-down';   
-    else if (buf.getUint8(4) & 4) 
-        orientation = 'lying on right side';   
-    else if (buf.getUint8(4) & 8) 
-        orientation = 'lying on left side';      
-    else if (buf.getUint8(4) & 0x20) 
-        orientation = 'leaning back';
-    else if (buf.getUint8(4) & 0x40) 
-        orientation = 'tilted right'; 
-    else if (buf.getUint8(4) & 0x80) 
-        orientation = 'tilted left';    
-    var state = {};
-    state['antenna'] = antenna;
-    state['orientation'] = orientation;
-
-    if (buf.getUint8(2) & 1)
-        state.tickle_head_back = true;
-    if (buf.getUint8(2) & 2)
-        state.tickle_tummy = true;
-    if (buf.getUint8(2) & 4)
-        state.tickle_right_side = true;
-    if (buf.getUint8(2) & 8)
-        state.tickle_left_side = true;
-    if (buf.getUint8(2) & 0x10)
-        state.pull_tail = true;
-    if (buf.getUint8(2) & 0x20)
-        state.push_tongue = true;
-    return state;
-}
-
-async function doConnect() {
-    log('Requesting Bluetooth Devices with Furby name...');
-    var server;
-    try {
-        device = await navigator.bluetooth.requestDevice({
-            filters: [{ name: 'Furby'}], 
-            optionalServices: ['generic_access', 'device_information', fluff_service]});
-        device.addEventListener('gattserverdisconnected', onDisconnected);
-        log('Connecting to GATT Server...');
-        server = await device.gatt.connect();
-    } catch (e) {
-        msg.error('Failed to connect');
-        log(e.message);
-        return;
-    }
-
-    try {
-        log('Getting Furby Service...');
-        const service = await server.getPrimaryService(fluff_service);
-    
-        log('Getting Furby Characteristics...');
-        const characteristics = await service.getCharacteristics();
-    
-        // put handles to characteristics into chars object
-        for (const characteristic of characteristics) {
-            var uuid = characteristic.uuid;
-            var name = uuid_lookup[uuid];
-            var props = '';
-            for (let k in characteristic.properties) {
-                if (characteristic.properties[k]) props += k + ' ';
-            }
-            log('> Got Characteristic: ' + uuid + ' - ' + name + ' (' + props + ')');
-            furby_chars[name] = characteristic;
-        }
-        // enable notifications
-        furby_chars.GeneralPlusListen.addEventListener('characteristicvaluechanged', handleGeneralPlusResponse);
-        await furby_chars.GeneralPlusListen.startNotifications();
-
-        furby_chars.NordicListen.addEventListener('characteristicvaluechanged', handleNordicNotification);
-        await furby_chars.NordicListen.startNotifications();
-    } catch (e) {
-        msg.error('Failed initialise BLE services');
-        log(e.message);
-        return;
-    }
-  
-    //await triggerAction(39,4,2,0); // 'get ready'
-    gp_listen_callbacks = [];
-    startKeepAlive();
-    onConnected();
-    addGPListenCallback([0x21], onFurbySensorData);
-    await checkActiveSlot();
-
-    await setAntennaColor(255,0,0);
-    await sleep(600);
-    await setAntennaColor(0,255,0);
-    await sleep(600);
-    await setAntennaColor(0,0,255);
-    await sleep(600);
-
-
-}
+                        setTimeout(transferNextChu
